@@ -35,6 +35,7 @@ No dependencies beyond BepInEx and the Configuration Manager (for the in-game me
 | General | `BaseAlpha` | `0.3` | see-through of an inactive segment, 0 (invisible) to 1 (solid) |
 | General | `ActiveColor` | `#FFB800` | color of a segment that has loot in it |
 | General | `ActiveAlpha` | `1` | see-through of a lit segment, 0 (invisible) to 1 (solid) |
+| About | `Repository` | link | project page on GitHub, kept in the config file for reference |
 
 ## Notes
 

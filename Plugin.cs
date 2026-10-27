@@ -210,6 +210,11 @@ namespace LootPeleng
             // fixed to 200ms (menu entry removed): how often the sphere query runs
             ScanIntervalMs = Hidden(config, "General", "ScanIntervalMs", 200f,
                 "Fixed to 200ms: how often loot is scanned around the player.");
+
+            // not a setting: a plain entry carrying the project page, visible in the menu and in
+            // the cfg file, so anyone who opens either one can find the repository
+            Ordered(config, "About", "Repository", "https://github.com/spair2k/LootPeleng",
+                "Project page on GitHub: releases, source, issues.", 10);
         }
 
         // sections are listed in the menu in the order they are first bound; inside a section the

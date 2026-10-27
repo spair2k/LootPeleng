@@ -15,6 +15,9 @@ Loose loot means items lying on the ground: common items, quest items, dug-up st
 
 No dependencies beyond BepInEx and the Configuration Manager (for the in-game menu; the config file works on its own).
 
+VirusTotal report for the release archive:
+https://www.virustotal.com/gui/file/dee333ee11d264e246358c1d2bb7bbc8cedacae5632acbf43966931ed776b933
+
 ## What it does
 
 - Scans a sphere around the player (default 2 m, every 200 ms — costs nothing on big maps)

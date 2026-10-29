@@ -11,7 +11,9 @@ namespace LootPeleng
     // draws a small four-segment ring at the center of the screen whenever loose loot is within a
     // radius of the player. every 90 degree segment lights up when loot sits in that direction,
     // relative to where the player is looking. loose loot means items lying on the ground (including
-    // quest items and dug-up stashes); containers, backpacks and corpses are not counted
+    // quest items and dug-up stashes); containers, backpacks and corpses are not counted.
+    // quest items light their segment in the active color with a one-second pulse no matter
+    // where they sit: ground, tables, containers, safes, car cabins or corpses
     [BepInPlugin(Guid, Name, Version)]
     public class Plugin : BaseUnityPlugin
     {
@@ -30,6 +32,7 @@ namespace LootPeleng
         private Vector3 _lastForward = Vector3.forward;
         private float _nextScan;
         private int _mask;
+        private bool _questNear;
 
         private void Awake()
         {
@@ -63,9 +66,17 @@ namespace LootPeleng
                 return;
             }
 
+            // quest loot nearby: the active color pulses on a one-second cycle; every other
+            // segment keeps its static look
+            var activeAlpha = Settings.ActiveAlpha.Value;
+            if (_questNear)
+            {
+                activeAlpha *= 0.35f + 0.65f * Mathf.PingPong(Time.unscaledTime, 1f);
+            }
+
             var tex = Ring.Build(_mask, Settings.RingSizePx.Value,
                 Settings.BaseColor.Value, Settings.BaseAlpha.Value,
-                Settings.ActiveColor.Value, Settings.ActiveAlpha.Value);
+                Settings.ActiveColor.Value, activeAlpha);
 
             var size = tex.width;
             GUI.DrawTexture(new Rect(Screen.width * 0.5f - size * 0.5f,
@@ -77,6 +88,7 @@ namespace LootPeleng
         private void Scan()
         {
             _mask = 0;
+            _questNear = false;
 
             if (_player == null)
             {
@@ -118,10 +130,11 @@ namespace LootPeleng
                 }
 
                 // quest items must show up no matter where they sit: on the ground, on tables,
-                // inside containers, safes, cars or corpses
+                // inside containers, safes, cars or corpses; their segments pulse
                 if (loot.Item.QuestItem)
                 {
                     _mask |= 0xF;
+                    _questNear = true;
                     continue;
                 }
 

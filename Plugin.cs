@@ -103,10 +103,17 @@ namespace LootPeleng
                     continue;
                 }
 
-                var loot = collider.GetComponentInParent<LootItem>();
+                var loot = collider.GetComponent<LootItem>()
+                    ?? collider.GetComponentInParent<LootItem>()
+                    ?? collider.GetComponentInChildren<LootItem>(true);
+
+                if (loot == null)
+                {
+                    continue;
+                }
 
                 // corpses only hold loot inside bags and vests, which the ring is not about
-                if (loot == null || loot is Corpse)
+                if (loot is Corpse)
                 {
                     continue;
                 }

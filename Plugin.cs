@@ -139,7 +139,12 @@ namespace LootPeleng
                 }
 
                 var angle = Mathf.Atan2(Vector3.Dot(delta, right), Vector3.Dot(delta, forward)) * Mathf.Rad2Deg;
-                var quadrant = Mathf.FloorToInt((angle + 45f) / 90f) & 3;
+                if (angle < 0f)
+                {
+                    angle += 360f;
+                }
+
+                var quadrant = Mathf.FloorToInt(angle / 90f) % 4;
                 _mask |= 1 << quadrant;
             }
         }

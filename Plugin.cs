@@ -112,13 +112,28 @@ namespace LootPeleng
                     continue;
                 }
 
+                if (loot.Item == null)
+                {
+                    continue;
+                }
+
+                // quest items must show up no matter where they sit: on the ground, on tables,
+                // inside containers, safes, cars or corpses
+                if (loot.Item.QuestItem)
+                {
+                    _mask |= 0xF;
+                    continue;
+                }
+
                 // corpses only hold loot inside bags and vests, which the ring is not about
                 if (loot is Corpse)
                 {
                     continue;
                 }
 
-                if (loot.Item == null)
+                // anything sitting inside a container (jackets, safes, boxes, car cabins)
+                // is found through its parent, so keep the ring about loose loot only
+                if (loot.GetComponentInParent<LootableContainer>() != null)
                 {
                     continue;
                 }

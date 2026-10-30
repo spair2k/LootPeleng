@@ -138,8 +138,10 @@ namespace LootPeleng
                     continue;
                 }
 
-                // corpses only hold loot inside bags and vests, which the ring is not about
-                if (loot is Corpse)
+                // a dropped scav corpse becomes a separate lootable body: the corpse itself is a
+                // LootItem subclass whose Item is its container, so drop it with the container check.
+                // also covers ObservedCorpse: a body another player (or a bot) has looted already
+                if (loot is Corpse || loot is ObservedCorpse)
                 {
                     continue;
                 }

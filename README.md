@@ -6,7 +6,7 @@ A small SP Tushonka (4.1.6) client mod that draws a ring at the center of the sc
 
 The ring is split into four 90-degree segments relative to where you look. A segment lights up when loot sits in that direction — so at a glance you see which side of you the loot is on.
 
-Loose loot means items lying on the ground: common items, quest items, dug-up stashes and bookmarks. Containers (drawers, crates, backpacks, bags, vests) and corpses are **not** counted — the ring points at things that already lie outside.
+Loose loot means items lying on surfaces: the ground, tables, shelves and nightstands. Items inside containers (jackets, safes, crates, backpacks, vests), items worn or held by a body (the backpack, the rig, clothes, the weapon in its hands with everything mounted on it) are **not** counted. Quest items are always shown no matter where they sit — ground, tables, containers, safes, car cabins or corpses — and their ring pulses once a second in the active color.
 
 ## Install
 
@@ -16,17 +16,21 @@ Loose loot means items lying on the ground: common items, quest items, dug-up st
 No dependencies beyond BepInEx and the Configuration Manager (for the in-game menu; the config file works on its own).
 
 VirusTotal report for the release archive:
-https://www.virustotal.com/gui/file/dee333ee11d264e246358c1d2bb7bbc8cedacae5632acbf43966931ed776b933
+https://www.virustotal.com/gui/file/2816d31cd2f8da81373533c642f1903c1b38243dddd57b82bdb1318b38efc9cc
 
 ## What it does
 
 - Scans a sphere around the player (default 2 m, every 200 ms — costs nothing on big maps)
-- Counts `LootItem` objects: ground items, quest items, buried barrels (НПР), planted items
-- Skips corpses (their loot is inside bags, not lying out)
+- Counts `LootItem` objects lying on surfaces: ground items, table items, buried barrels (НПР), planted items
+- Quest items (`Item.QuestItem`) always light the whole ring, wherever they sit — containers, safes, cars, corpses included — and their segments pulse once a second in the active color
+- Skips items inside `LootableContainer` (jackets, safes, crates, car cabins)
+- Skips bodies entirely: the corpse itself, its equipment tree (backpack, rig, clothes) and the weapon it holds in its hands with all mounted mods
 - Optionally skips items you dropped yourself
-- Lights the matching quarter of the center-screen ring; loot under your feet (inside 0.5 m) lights the whole ring
+- Loot under your feet (inside 0.5 m) lights the whole ring
 
-## Settings (F12)
+## Settings
+
+All settings are changed in the in-game configuration menu (open it with the key set in the Configuration Manager) and persist between sessions.
 
 | Section | Setting | Default | Description |
 |---|---|---|---|

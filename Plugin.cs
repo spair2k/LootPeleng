@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -19,7 +20,7 @@ namespace LootPeleng
     {
         public const string Guid = "com.q8b1q.lootpeleng";
         public const string Name = "Loot Peleng";
-        public const string Version = "1.0.1";
+        public const string Version = "1.0.2";
 
         internal static ManualLogSource Log;
 
@@ -33,6 +34,11 @@ namespace LootPeleng
         private float _nextScan;
         private int _mask;
         private bool _questNear;
+
+        // layer every dead body gets in Corpse.Init, and the layer the game moves the colliders
+        // of a dead body's held weapon to; both death paths re-layer the weapon, so the layer set
+        // marks it as part of the body. resolved once
+        private int _deadbodyLayer = -1;
 
         private void Awake()
         {
@@ -107,6 +113,36 @@ namespace LootPeleng
 
             var count = Physics.OverlapSphereNonAlloc(origin, radius, _hits, -1, QueryTriggerInteraction.Collide);
 
+            if (_deadbodyLayer < 0)
+            {
+                _deadbodyLayer = LayerMask.NameToLayer("Deadbody");
+            }
+
+            // the weapon a body holds in its hands is a world object of its own: it is not a child
+            // of the corpse in the scene, its owner chain does not reach the body's equipment tree
+            // (root=null), and its LootItem item is set without an owner via SetItemAndRigidbody.
+            // the game moves all of that weapon's colliders (with mounted mods) to the Deadbody
+            // layer on both death paths, so the layer set marks it as part of the body. collect
+            // the transforms of every Deadbody-layer object that carries a LootItem: these are
+            // exactly the held weapons near the player
+            HashSet<Transform> heldWeapons = null;
+            for (var i = 0; i < count; i++)
+            {
+                var hit = _hits[i];
+                if (hit == null || _deadbodyLayer < 0 || hit.gameObject.layer != _deadbodyLayer)
+                {
+                    continue;
+                }
+
+                if (hit.GetComponentInParent<LootItem>() is not LootItem held)
+                {
+                    continue;
+                }
+
+                heldWeapons ??= new HashSet<Transform>();
+                heldWeapons.Add(held.transform);
+            }
+
             for (var i = 0; i < count; i++)
             {
                 var collider = _hits[i];
@@ -138,10 +174,31 @@ namespace LootPeleng
                     continue;
                 }
 
-                // a dropped scav corpse becomes a separate lootable body: the corpse itself is a
-                // LootItem subclass whose Item is its container, so drop it with the container check.
-                // also covers ObservedCorpse: a body another player (or a bot) has looted already
-                if (loot is Corpse || loot is ObservedCorpse)
+                // a body (scav, PMC, boss alike) owns one equipment tree whose root item is
+                // InventoryEquipment: the backpack, the rig, clothes and the weapon in hands are
+                // all children of that root, even when the collider that hit the sphere belongs
+                // to a child object of the corpse rather than the corpse itself. a backpack or
+                // rig worn by a body is an isolating container, not loose loot. quest loot inside
+                // the tree must still show up, so the check runs after the QuestItem check
+                if (IsCorpseLoot(loot))
+                {
+                    continue;
+                }
+
+                // the weapon held in the body's hands (and the mods mounted in it) are LootItems
+                // of their own with colliders inside the body's hierarchy, while their owner chain
+                // does not reach the equipment root. anything mounted on the corpse this way is
+                // part of the corpse, not loose loot. ObservedCorpse derives from Corpse, so one
+                // component check covers both
+                if (loot is Corpse || loot is ObservedCorpse || IsMountedOnCorpse(loot))
+                {
+                    continue;
+                }
+
+                // a Deadbody-layer transform carrying a LootItem is a held weapon of a nearby
+                // body, not ground loot; anything nested in that weapon's object tree, like a
+                // collider of a mounted mod, is covered by the hierarchy walk
+                if (IsWithinHeldWeapon(loot.transform, heldWeapons))
                 {
                     continue;
                 }
@@ -184,6 +241,57 @@ namespace LootPeleng
                 var quadrant = Mathf.FloorToInt(angle / 90f) % 4;
                 _mask |= 1 << quadrant;
             }
+        }
+
+        // true for anything logically worn by a body: the corpse's LootItem itself (its Item is
+        // the body's InventoryEquipment root) and every item inside that tree, because the owner
+        // controller's RootItem resolves to the same InventoryEquipment for all of them
+        private static bool IsCorpseLoot(LootItem loot)
+        {
+            var root = loot.ItemOwner != null ? loot.ItemOwner.RootItem : null;
+            return root is EFT.InventoryLogic.InventoryEquipment
+                || loot.Item is EFT.InventoryLogic.InventoryEquipment;
+        }
+
+        // true when the item physically hangs inside a corpse's transform hierarchy: the weapon
+        // attached to the body's hands and the mods mounted in that weapon
+        private static bool IsMountedOnCorpse(LootItem loot)
+        {
+            var t = loot.transform;
+            while (t != null)
+            {
+                if (t.GetComponent<Corpse>() != null)
+                {
+                    return true;
+                }
+
+                t = t.parent;
+            }
+
+            return false;
+        }
+
+        // true when the item sits anywhere inside a held weapon's object tree: the weapon itself
+        // is a Deadbody-layer transform (collected before this loop) and a mod mounted in it, like
+        // a suppressor or a scope, hangs deeper in the same tree
+        private static bool IsWithinHeldWeapon(Transform t, HashSet<Transform> heldWeapons)
+        {
+            if (heldWeapons == null)
+            {
+                return false;
+            }
+
+            while (t != null)
+            {
+                if (heldWeapons.Contains(t))
+                {
+                    return true;
+                }
+
+                t = t.parent;
+            }
+
+            return false;
         }
 
         // the segments face the same way the player looks; looking straight up or down flattens the

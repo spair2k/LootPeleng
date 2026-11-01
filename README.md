@@ -53,7 +53,7 @@ All settings are changed in the in-game configuration menu (open it with the key
 ## Build
 
 ```
-dotnet build -c Release
+dotnet build -c Release -p:GamePath="C:\path\to\your SPT folder"
 ```
 
-The project references the game DLLs from `$(GamePath)` (default `d:\spt4`); pass `-p:GamePath=<your path>` if yours differs.
+`GamePath` is required: it is the game root that contains `BepInEx` and `EscapeFromTarkov.exe`. Without it the build stops with an explanatory error. References resolve against the game DLLs, nothing is copied into the output.

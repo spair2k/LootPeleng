@@ -13,3 +13,7 @@ obj/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Backups
+*.tmp
+*.bak

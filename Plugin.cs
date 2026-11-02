@@ -5,9 +5,9 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 
 using EFT;
-using EFT.Bots;
 using EFT.Interactive;
 using UnityEngine;
+using Comfort.Common;
 
 namespace LootPeleng
 {
@@ -28,6 +28,9 @@ namespace LootPeleng
 
         // loot closer than this counts as "right under you": the whole ring lights up
         private const float AllQuadrantsMeters = 0.5f;
+
+        // bots farther than this from the player are never treated as a threat
+        private const float ThreatDistanceMeters = 40f;
 
         private readonly Collider[] _hits = new Collider[64];
 
@@ -201,146 +204,103 @@ namespace LootPeleng
             }
         }
 
+        // typed bot list access, resolved once per raid: IBotGame -> BotsController -> Bots.BotOwners.
+        // BotOwners is a HashSet the game itself maintains, reading it is allocation-free and costs
+        // nothing compared to a scene-wide FindObjectsOfType every check
+        private IEnumerable<BotOwner> _bots;
+        private bool _botsResolved;
+
+        private bool TryResolveBots()
+        {
+            if (_botsResolved)
+            {
+                // resolved before; the list dies with the raid, detect that and re-resolve
+                // when a new raid starts
+                if (_bots != null)
+                {
+                    foreach (var probe in _bots)
+                    {
+                        return true;
+                    }
+                }
+
+                // empty or stale: keep re-resolving until we see bots or the raid ends
+                _botsResolved = false;
+                return false;
+            }
+
+            try
+            {
+                if (!Singleton<IBotGame>.Instantiated)
+                {
+                    return false;
+                }
+
+                var controller = Singleton<IBotGame>.Instance.BotsController;
+                if (controller?.Bots != null)
+                {
+                    _bots = controller.Bots.BotOwners;
+                    _botsResolved = true;
+                }
+            }
+            catch
+            {
+                // raid not running / wrong state: try again on a later check
+            }
+
+            return _bots != null;
+        }
+
+        // true when at least one bot is actively engaging the player: it has the player as its
+        // goal enemy and can shoot at them right now (the game resolved visibility and range
+        // for us), or it sees the player and is close enough to be an immediate threat.
+        // reads the game's own bot registry: no scene scans, no reflection, no allocations
         private bool IsUnderThreat()
         {
-            if (_player == null)
+            if (_player == null || !TryResolveBots())
             {
                 return false;
             }
 
             var pos = _player.Transform.position;
-            BotOwner[] botOwners = null;
-            try
-            {
-                botOwners = UnityEngine.Object.FindObjectsOfType<BotOwner>();
-            }
-            catch
-            {
-                botOwners = null;
-            }
 
-            if (botOwners == null)
+            foreach (var botOwner in _bots)
             {
-                return false;
-            }
-
-            for (int i = 0; i < botOwners.Length; i++)
-            {
-                var botOwner = botOwners[i];
                 if (botOwner == null)
                 {
                     continue;
                 }
 
-                IPlayer botPerson = null;
-                try
-                {
-                    var t = botOwner.GetType();
-                    botPerson = t.GetProperty("Person")?.GetValue(botOwner, null) as IPlayer;
-                    if (botPerson == null)
-                    {
-                        botPerson = t.GetProperty("BotPlayer")?.GetValue(botOwner, null) as IPlayer;
-                    }
-                }
-                catch
-                {
-                    botPerson = null;
-                }
-
-                if (botPerson == null || botPerson == _player)
+                var enemy = botOwner.Memory?.GoalEnemy;
+                if (enemy?.Person == null)
                 {
                     continue;
                 }
 
-                float dist = 999f;
-                try
-                {
-                    dist = Vector3.Distance(botOwner.Position, pos);
-                }
-                catch
-                {
-                    try
-                    {
-                        var p = botOwner.GetType().GetProperty("Position");
-                        if (p != null)
-                        {
-                            var v = p.GetValue(botOwner, null);
-                            if (v is Vector3 vv) dist = Vector3.Distance(vv, pos);
-                        }
-                    }
-                    catch { }
-                }
-
-                if (dist > 40f)
+                // only bots whose goal enemy is the local player
+                if (enemy.Person != (IPlayer)_player)
                 {
                     continue;
                 }
 
-                try
+                // distance gate first, cheapest check; covers the "aimed at by a bot that has
+                // not raised its weapon yet" case as well, since GoalEnemy already means "engaged"
+                var dist = Vector3.Distance(botOwner.Position, pos);
+                if (dist > ThreatDistanceMeters)
                 {
-                    var tBo = botOwner.GetType();
-                    var memory = tBo.GetProperty("Memory")?.GetValue(botOwner, null);
-                    if (memory != null)
-                    {
-                        var goalEnemy = memory.GetType().GetProperty("GoalEnemy")?.GetValue(memory, null);
-                        if (goalEnemy != null)
-                        {
-                            var goalPerson = goalEnemy.GetType().GetProperty("Person")?.GetValue(goalEnemy, null) as IPlayer;
-                            if (goalPerson == _player)
-                            {
-                                // try to detect aiming
-                                object aimingData = tBo.GetProperty("AimingData")?.GetValue(botOwner, null);
-                                if (aimingData == null)
-                                {
-                                    var aimingManager = tBo.GetProperty("AimingManager")?.GetValue(botOwner, null);
-                                    if (aimingManager != null)
-                                    {
-                                        aimingData = aimingManager.GetType().GetProperty("AimingData")?.GetValue(aimingManager, null);
-                                    }
-                                }
-
-                                if (aimingData != null)
-                                {
-                                    var isAimingProp = aimingData.GetType().GetProperty("IsAiming");
-                                    if (isAimingProp != null)
-                                    {
-                                        var val = isAimingProp.GetValue(aimingData, null);
-                                        if (val is bool bAim && bAim)
-                                        {
-                                            return true;
-                                        }
-                                    }
-                                }
-
-                                if (dist < 25f)
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-
-                    var lookSensor = tBo.GetProperty("LookSensor")?.GetValue(botOwner, null);
-                    if (lookSensor != null)
-                    {
-                        var isVisibleMethod = lookSensor.GetType().GetMethod("IsVisible");
-                        if (isVisibleMethod != null)
-                        {
-                            try
-                            {
-                                var res = isVisibleMethod.Invoke(lookSensor, new object[] { _player });
-                                if (res is bool vis && vis && dist < 20f)
-                                {
-                                    return true;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
+                    continue;
                 }
-                catch
+
+                if (enemy.CanShoot)
                 {
-                    // ignore
+                    // the game computed visibility + range: this bot can put fire on me now
+                    return true;
+                }
+
+                if (enemy.IsVisible && dist < 25f)
+                {
+                    // sees me at close range: treat as threat even before it can shoot
+                    return true;
                 }
             }
 

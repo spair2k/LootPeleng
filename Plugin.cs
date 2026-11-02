@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+
 using EFT;
+using EFT.Bots;
 using EFT.Interactive;
 using UnityEngine;
 
@@ -34,6 +36,11 @@ namespace LootPeleng
         private float _nextScan;
         private int _mask;
         private bool _questNear;
+        private bool _forceHideRing;
+
+        // combat threat tracking: hide ring while under aim/fire threat
+        private float _lastThreatTime = -1f;
+        private float _threatCheckNext;
 
         // layer every dead body gets in Corpse.Init, and the layer the game moves the colliders
         // of a dead body's held weapon to; both death paths re-layer the weapon, so the layer set
@@ -56,7 +63,28 @@ namespace LootPeleng
 
         private void Update()
         {
-            if (!Settings.Enabled.Value || Time.unscaledTime < _nextScan)
+            if (!Settings.Enabled.Value)
+            {
+                _forceHideRing = false;
+                _mask = 0;
+                _questNear = false;
+                return;
+            }
+
+            UpdateCombatThreat();
+
+            if (_forceHideRing)
+            {
+                _mask = 0;
+                _questNear = false;
+                if (Time.unscaledTime >= _nextScan)
+                {
+                    _nextScan = Time.unscaledTime + Math.Max(0.05f, Settings.ScanIntervalMs.Value / 1000f);
+                }
+                return;
+            }
+
+            if (Time.unscaledTime < _nextScan)
             {
                 return;
             }
@@ -67,7 +95,7 @@ namespace LootPeleng
 
         private void OnGUI()
         {
-            if (!Settings.Enabled.Value || _mask == 0)
+            if (!Settings.Enabled.Value || _mask == 0 || _forceHideRing)
             {
                 return;
             }
@@ -85,8 +113,238 @@ namespace LootPeleng
                 Settings.ActiveColor.Value, activeAlpha);
 
             var size = tex.width;
-            GUI.DrawTexture(new Rect(Screen.width * 0.5f - size * 0.5f,
-                Screen.height * 0.5f - size * 0.5f, size, size), tex);
+            var pos = GetRingPosition(size);
+            GUI.DrawTexture(new Rect(pos.x - size * 0.5f, pos.y - size * 0.5f, size, size), tex);
+        }
+
+        private Vector2 GetRingPosition(int size)
+        {
+            var centerX = Screen.width * 0.5f;
+            var centerY = Screen.height * 0.5f;
+
+            if (Settings.RingAnchor.Value != 0)
+            {
+                // 0 = Center, 1 = BottomLeftSilhouette
+                if (Settings.RingAnchor.Value == 1)
+                {
+                    var x = Settings.RingOffsetX.Value;
+                    var y = Settings.RingOffsetY.Value;
+                    // approximate silhouette area in bottom-left; keep configurable offset from a reasonable base
+                    return new Vector2(x + size * 0.6f, centerY * 2f - y - size * 0.6f);
+                }
+            }
+
+            return new Vector2(centerX + Settings.RingOffsetX.Value, centerY + Settings.RingOffsetY.Value);
+        }
+
+        private void UpdateCombatThreat()
+        {
+            _forceHideRing = false;
+            if (!Settings.CombatHideEnabled.Value)
+            {
+                _lastThreatTime = -1f;
+                return;
+            }
+
+            var now = Time.unscaledTime;
+            if (now < _threatCheckNext)
+            {
+                // still in cooldown, keep hidden if recently threatened
+                if (_lastThreatTime > 0f)
+                {
+                    var timeout = Settings.CombatHideSilenceTimeout.Value;
+                    if (timeout < 1f) timeout = 1f;
+                    if (now - _lastThreatTime < timeout)
+                    {
+                        _forceHideRing = true;
+                    }
+                    else
+                    {
+                        _lastThreatTime = -1f;
+                    }
+                }
+                return;
+            }
+
+            _threatCheckNext = now + Math.Max(0.05f, Settings.CombatHideCheckIntervalMs.Value / 1000f);
+
+            if (_player == null)
+            {
+                _player = FindObjectOfType<LocalPlayer>();
+            }
+
+            if (_player == null || _player.HealthController == null || _player.HealthController.IsAlive == false)
+            {
+                return;
+            }
+
+            var threat = IsUnderThreat();
+            if (threat)
+            {
+                _lastThreatTime = now;
+                _forceHideRing = true;
+                return;
+            }
+
+            if (_lastThreatTime > 0f)
+            {
+                var timeout = Settings.CombatHideSilenceTimeout.Value;
+                if (timeout < 1f) timeout = 1f;
+                if (now - _lastThreatTime < timeout)
+                {
+                    _forceHideRing = true;
+                }
+                else
+                {
+                    _lastThreatTime = -1f;
+                }
+            }
+        }
+
+        private bool IsUnderThreat()
+        {
+            if (_player == null)
+            {
+                return false;
+            }
+
+            var pos = _player.Transform.position;
+            BotOwner[] botOwners = null;
+            try
+            {
+                botOwners = UnityEngine.Object.FindObjectsOfType<BotOwner>();
+            }
+            catch
+            {
+                botOwners = null;
+            }
+
+            if (botOwners == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < botOwners.Length; i++)
+            {
+                var botOwner = botOwners[i];
+                if (botOwner == null)
+                {
+                    continue;
+                }
+
+                IPlayer botPerson = null;
+                try
+                {
+                    var t = botOwner.GetType();
+                    botPerson = t.GetProperty("Person")?.GetValue(botOwner, null) as IPlayer;
+                    if (botPerson == null)
+                    {
+                        botPerson = t.GetProperty("BotPlayer")?.GetValue(botOwner, null) as IPlayer;
+                    }
+                }
+                catch
+                {
+                    botPerson = null;
+                }
+
+                if (botPerson == null || botPerson == _player)
+                {
+                    continue;
+                }
+
+                float dist = 999f;
+                try
+                {
+                    dist = Vector3.Distance(botOwner.Position, pos);
+                }
+                catch
+                {
+                    try
+                    {
+                        var p = botOwner.GetType().GetProperty("Position");
+                        if (p != null)
+                        {
+                            var v = p.GetValue(botOwner, null);
+                            if (v is Vector3 vv) dist = Vector3.Distance(vv, pos);
+                        }
+                    }
+                    catch { }
+                }
+
+                if (dist > 40f)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var tBo = botOwner.GetType();
+                    var memory = tBo.GetProperty("Memory")?.GetValue(botOwner, null);
+                    if (memory != null)
+                    {
+                        var goalEnemy = memory.GetType().GetProperty("GoalEnemy")?.GetValue(memory, null);
+                        if (goalEnemy != null)
+                        {
+                            var goalPerson = goalEnemy.GetType().GetProperty("Person")?.GetValue(goalEnemy, null) as IPlayer;
+                            if (goalPerson == _player)
+                            {
+                                // try to detect aiming
+                                object aimingData = tBo.GetProperty("AimingData")?.GetValue(botOwner, null);
+                                if (aimingData == null)
+                                {
+                                    var aimingManager = tBo.GetProperty("AimingManager")?.GetValue(botOwner, null);
+                                    if (aimingManager != null)
+                                    {
+                                        aimingData = aimingManager.GetType().GetProperty("AimingData")?.GetValue(aimingManager, null);
+                                    }
+                                }
+
+                                if (aimingData != null)
+                                {
+                                    var isAimingProp = aimingData.GetType().GetProperty("IsAiming");
+                                    if (isAimingProp != null)
+                                    {
+                                        var val = isAimingProp.GetValue(aimingData, null);
+                                        if (val is bool bAim && bAim)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                }
+
+                                if (dist < 25f)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    var lookSensor = tBo.GetProperty("LookSensor")?.GetValue(botOwner, null);
+                    if (lookSensor != null)
+                    {
+                        var isVisibleMethod = lookSensor.GetType().GetMethod("IsVisible");
+                        if (isVisibleMethod != null)
+                        {
+                            try
+                            {
+                                var res = isVisibleMethod.Invoke(lookSensor, new object[] { _player });
+                                if (res is bool vis && vis && dist < 20f)
+                                {
+                                    return true;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            return false;
         }
 
         // one sphere query around the player, every ScanIntervalMs: cheap even on big maps because
@@ -323,6 +581,17 @@ namespace LootPeleng
         public static ConfigEntry<float> ActiveAlpha;
         public static ConfigEntry<float> ScanIntervalMs;
 
+        // combat hide
+        public static ConfigEntry<bool> CombatHideEnabled;
+        public static ConfigEntry<bool> CombatHideHideWhenAimedAt;
+        public static ConfigEntry<float> CombatHideSilenceTimeout;
+        public static ConfigEntry<float> CombatHideCheckIntervalMs;
+
+        // positioning
+        public static ConfigEntry<int> RingAnchor; // 0 = center, 1 = bottom left silhouette
+        public static ConfigEntry<int> RingOffsetX;
+        public static ConfigEntry<int> RingOffsetY;
+
         internal static void Bind(ConfigFile config)
         {
             Enabled = Ordered(config, "General", "Enabled", true,
@@ -360,6 +629,34 @@ namespace LootPeleng
             // fixed to 200ms (menu entry removed): how often the sphere query runs
             ScanIntervalMs = Hidden(config, "General", "ScanIntervalMs", 200f,
                 "Fixed to 200ms: how often loot is scanned around the player.");
+
+            // combat hide
+            CombatHideEnabled = Ordered(config, "Combat Hide", "Enabled", true,
+                "Completely hide the ring while under threat (even for quest items). Resume after silence.", 40);
+            CombatHideHideWhenAimedAt = Ordered(config, "Combat Hide", "HideWhenAimedAt", true,
+                "Hide if enemies are aiming at you or have you as a target.", 39);
+            CombatHideSilenceTimeout = config.Bind("Combat Hide", "SilenceTimeoutSeconds", 4f,
+                new ConfigDescription("Seconds of silence after threat before the ring returns.",
+                    new AcceptableValueRange<float>(1f, 10f),
+                    new ConfigurationManagerAttributes { Order = 38 }));
+            CombatHideCheckIntervalMs = config.Bind("Combat Hide", "CheckIntervalMs", 100f,
+                new ConfigDescription("How often to check for threats.",
+                    new AcceptableValueRange<float>(50f, 250f),
+                    new ConfigurationManagerAttributes { Order = 37 }));
+
+            // positioning
+            RingAnchor = config.Bind("Position", "Anchor", 0,
+                new ConfigDescription("0 = center, 1 = bottom left near silhouette.",
+                    new AcceptableValueRange<int>(0, 1),
+                    new ConfigurationManagerAttributes { Order = 30 }));
+            RingOffsetX = config.Bind("Position", "OffsetX", 0,
+                new ConfigDescription("Horizontal offset from anchor in pixels.",
+                    new AcceptableValueRange<int>(-512, 512),
+                    new ConfigurationManagerAttributes { Order = 29 }));
+            RingOffsetY = config.Bind("Position", "OffsetY", 0,
+                new ConfigDescription("Vertical offset from anchor in pixels.",
+                    new AcceptableValueRange<int>(-512, 512),
+                    new ConfigurationManagerAttributes { Order = 28 }));
 
             // not a setting: a plain entry carrying the project page, visible in the menu and in
             // the cfg file, so anyone who opens either one can find the repository

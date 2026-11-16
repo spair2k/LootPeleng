@@ -6,7 +6,14 @@
     <RootNamespace>LootPeleng</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <Version>1.0.0</Version>
+    <!-- NuGet version must be valid semver; the RC build tag lives in InformationalVersion
+         (file metadata) and in the BepInPlugin attribute -->
+    <Version>1.0.3</Version>
+    <InformationalVersion>1.0.3</InformationalVersion>
+    <!-- the commit hash suffix SDK appends to InformationalVersion is not wanted here -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
     <DebugType>none</DebugType>
     <!-- the game root: the folder that contains BepInEx and EscapeFromTarkov.exe.
          pass it on the command line: dotnet build -p:GamePath="C:\path\to\your SPT folder" -->
@@ -44,6 +51,12 @@
       <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Comfort">
+      <HintPath>$(ManagedDir)\Comfort.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- compile-time only: the Player type implements IDissonancePlayer, the game ships
+         this assembly itself, nothing is copied to the output -->
     <Reference Include="DissonanceVoip">
       <HintPath>$(ManagedDir)\DissonanceVoip.dll</HintPath>
       <Private>false</Private>

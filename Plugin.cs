@@ -6,6 +6,7 @@ using BepInEx.Logging;
 using EFT;
 using EFT.Interactive;
 using UnityEngine;
+using Comfort.Common;
 
 namespace LootPeleng
 {
@@ -20,7 +21,11 @@ namespace LootPeleng
     {
         public const string Guid = "com.q8b1q.lootpeleng";
         public const string Name = "Loot Peleng";
-        public const string Version = "1.0.2";
+        // BepInPlugin requires a System.Version-parseable string, so the "RC" build tag
+        // cannot live in the attribute: the attribute carries the numeric version and
+        // BuildTag (printed in the Ready log line) carries the RC label.
+        // diagnostic versioning: bump the patch digit on every rebuild until issue #1 is solved
+        public const string Version = "1.0.3";
 
         internal static ManualLogSource Log;
 
@@ -29,11 +34,16 @@ namespace LootPeleng
 
         private readonly Collider[] _hits = new Collider[64];
 
-        private LocalPlayer _player;
+        private Player _player;
         private Vector3 _lastForward = Vector3.forward;
         private float _nextScan;
         private int _mask;
         private bool _questNear;
+
+        // player re-resolve throttle: when MainPlayer is not yet registered (raid just
+        // started) the fallback scene search runs at most this often, and only inside a raid
+        private const float PlayerRetrySeconds = 2f;
+        private float _nextPlayerResolve;
 
         // layer every dead body gets in Corpse.Init, and the layer the game moves the colliders
         // of a dead body's held weapon to; both death paths re-layer the weapon, so the layer set
@@ -56,6 +66,13 @@ namespace LootPeleng
 
         private void Update()
         {
+            // raid-only activity gate: outside a raid (menus, hideout) the mod does nothing
+            // at all, not even the cheap timer math - the ring is meaningless without a raid
+            if (!Singleton<GameWorld>.Instantiated)
+            {
+                return;
+            }
+
             if (!Settings.Enabled.Value || Time.unscaledTime < _nextScan)
             {
                 return;
@@ -67,6 +84,8 @@ namespace LootPeleng
 
         private void OnGUI()
         {
+            // the handler is invoked by the IMGUI loop several times per frame; the full ring
+            // draw costs ~0.5-1 ms per 10 s window, the menu stutter never came from here
             if (!Settings.Enabled.Value || _mask == 0)
             {
                 return;
@@ -85,8 +104,15 @@ namespace LootPeleng
                 Settings.ActiveColor.Value, activeAlpha);
 
             var size = tex.width;
+
+            // IMGUI color is global state shared by every OnGUI in the process: another mod's
+            // UI (or the settings manager) can leave it tinted or fully transparent, which
+            // would draw the ring texture invisible. reset before the draw, restore after
+            var oldColor = GUI.color;
+            GUI.color = Color.white;
             GUI.DrawTexture(new Rect(Screen.width * 0.5f - size * 0.5f,
                 Screen.height * 0.5f - size * 0.5f, size, size), tex);
+            GUI.color = oldColor;
         }
 
         // one sphere query around the player, every ScanIntervalMs: cheap even on big maps because
@@ -96,8 +122,31 @@ namespace LootPeleng
             _mask = 0;
             _questNear = false;
 
+            // the mod is raid-active only: the ring cannot work outside a raid anyway (no
+            // player, no loot rings in menus), so skip all work when no GameWorld exists.
+            // GameWorld is created per raid and released by the game on raid exit, so in
+            // menus and the hideout this gate is closed and Scan costs nothing
+            if (!Singleton<GameWorld>.Instantiated)
+            {
+                return;
+            }
+
+            // resolve the player from the game's own registry: GameWorld.MainPlayer is set
+            // for the local player on registration. no scene sweeps on the hot path ever -
+            // the sweep was the source of the menu microstutter (2.2 s of scene walks per
+            // 10 s window, 50-60 ms spikes). the throttled fallback below stays as a safety
+            // net for sessions where the registry entry is missing for any reason
             if (_player == null)
             {
+                _player = Singleton<GameWorld>.Instance.MainPlayer;
+            }
+
+            if (_player == null && Time.unscaledTime >= _nextPlayerResolve)
+            {
+                // safety net for sessions where the registry entry is missing for any reason:
+                // at most one throttled scene search per PlayerRetrySeconds; after the first
+                // success the result is cached and the search never runs again
+                _nextPlayerResolve = Time.unscaledTime + PlayerRetrySeconds;
                 _player = FindObjectOfType<LocalPlayer>();
             }
 
@@ -328,6 +377,12 @@ namespace LootPeleng
             Enabled = Ordered(config, "General", "Enabled", true,
                 "Draw the loot peleng ring at the center of the screen.", 70);
 
+            // log every enable/disable toggle (config edit, F12 plugin manager or code)
+            // with a timestamp so timeline analysis can align mod activity windows
+            // with external telemetry (frametime graphs, telemetry csv)
+            Enabled.SettingChanged += (_, __) =>
+                Plugin.Log.LogInfo($"LootPeleng {(Enabled.Value ? "ENABLED" : "DISABLED")} at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+
             RadiusMeters = config.Bind("General", "RadiusMeters", 2f,
                 new ConfigDescription("Loot closer than this to the player lights the ring.",
                     new AcceptableValueRange<float>(0.5f, 10f),
@@ -340,6 +395,11 @@ namespace LootPeleng
 
             IgnoreOwnDrops = Ordered(config, "General", "IgnoreOwnDrops", true,
                 "Items you dropped or threw yourself do not light the ring.", 55);
+
+            // log every toggle of the own-drops filter: correlates with ring SHOWN/HIDDEN
+            // transitions in the log when the "ring disappears" report is investigated
+            IgnoreOwnDrops.SettingChanged += (_, __) =>
+                Plugin.Log.LogInfo($"IgnoreOwnDrops {(IgnoreOwnDrops.Value ? "ON" : "OFF")} at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
 
             BaseColor = ColorChoice(config, "General", "BaseColor", "#FFFFFF",
                 "Color of a ring segment with no loot in it.", 50);

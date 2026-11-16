@@ -15,8 +15,8 @@ Loose loot means items lying on surfaces: the ground, tables, shelves and nights
 
 No dependencies beyond BepInEx and the Configuration Manager (for the in-game menu; the config file works on its own).
 
-VirusTotal report for the release archive (v1.0.2):
-https://www.virustotal.com/gui/file/B236CF1937E983C7E4614CA90199E4F0DDB1951FAC2B97B0E50972D0F0FE03BD
+VirusTotal report for the release archive (v1.0.3):
+https://www.virustotal.com/gui/file/30c7c12c74785c3c966f5c7051e1f60b4469d30b48788a2076ce0275e594bedd
 
 ## What it does
 
